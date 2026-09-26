@@ -1,0 +1,454 @@
+-- Z UI - Complete Roblox UI Library (Corregida)
+local ZUI = {}
+ZUI.__index = ZUI
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Theme = {
+    Background = Color3.fromRGB(13, 15, 20),
+    Sidebar = Color3.fromRGB(17, 19, 25),
+    Panel = Color3.fromRGB(20, 23, 30),
+    Element = Color3.fromRGB(25, 28, 36),
+    ElementHover = Color3.fromRGB(31, 35, 45),
+    Border = Color3.fromRGB(42, 46, 58),
+    Text = Color3.fromRGB(240, 242, 247),
+    SubText = Color3.fromRGB(145, 151, 164),
+    Blue = Color3.fromRGB(55, 145, 255),
+    BlueLight = Color3.fromRGB(100, 180, 255),
+    Red = Color3.fromRGB(240, 75, 85),
+    White = Color3.fromRGB(255, 255, 255)
+}
+
+local DefaultConfig = {
+    Mobile = true,
+    Width = 360,
+    Height = 430,
+    MinWidth = 300,
+    MinHeight = 260,
+    Margin = 12,
+    BackgroundColor = Color3.fromRGB(13, 15, 20),
+    BackgroundImage = "",
+    BackgroundImageTransparency = 0.28,
+    BackgroundGIF = nil,
+    GIFInterval = 0.10,
+    SelectorColor = Color3.fromRGB(55, 145, 255),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    MinimizedBar = true,
+    MinimizedWidth = 300,
+    MinimizedHeight = 52,
+    MinimizedTransparency = 0.80,
+    MinimizedTitle = "Z UI",
+    MinimizedIcon = "Skull",
+    MinimizedIconSize = 28,
+    MinimizedIconImage = "",
+    MinimizedIconAnimation = "PulseRotate",
+    MinimizedBarColor = Color3.fromRGB(13, 15, 20),
+    MinimizedAccentColor = Color3.fromRGB(55, 145, 255)
+}
+
+local function mergeConfig(options)
+    local config = {}
+    for k, v in pairs(DefaultConfig) do config[k] = v end
+    for k, v in pairs(options or {}) do config[k] = v end
+    return config
+end
+
+local function clampMobileSize(config)
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+    local width = math.min(config.Width, math.max(config.MinWidth, viewport.X - config.Margin * 2))
+    local height = math.min(config.Height, math.max(config.MinHeight, viewport.Y - config.Margin * 2))
+    return width, height
+end
+
+local function applyBackground(main, config)
+    main.BackgroundColor3 = config.BackgroundColor
+    local old = main:FindFirstChild("ZUI_Background")
+    if old then old:Destroy() end
+
+    local bg = Instance.new("ImageLabel")
+    bg.Name = "ZUI_Background"
+    bg.Size = UDim2.fromScale(1, 1)
+    bg.BackgroundTransparency = 1
+    bg.BorderSizePixel = 0
+    bg.ScaleType = Enum.ScaleType.Crop
+    bg.ImageTransparency = config.BackgroundImageTransparency or 0.28
+    bg.ZIndex = 0
+    bg.Parent = main
+
+    local bgCorner = Instance.new("UICorner")
+    bgCorner.CornerRadius = UDim.new(0, 12)
+    bgCorner.Parent = bg
+
+    if type(config.BackgroundGIF) == "table" and #config.BackgroundGIF > 0 then
+        task.spawn(function()
+            local index = 1
+            while bg and bg.Parent do
+                bg.Image = tostring(config.BackgroundGIF[index])
+                index = index + 1
+                if index > #config.BackgroundGIF then index = 1 end
+                task.wait(config.GIFInterval or 0.10)
+            end
+        end)
+    elseif config.BackgroundImage and config.BackgroundImage ~= "" then
+        bg.Image = tostring(config.BackgroundImage)
+    end
+    return bg
+end
+
+local function tween(obj, time, props, style, direction)
+    local info = TweenInfo.new(time or 0.2, style or Enum.EasingStyle.Quint, direction or Enum.EasingDirection.Out)
+    local t = TweenService:Create(obj, info, props)
+    t:Play()
+    return t
+end
+
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Theme.Border
+    s.Transparency = transparency or 0
+    s.Thickness = 1
+    s.Parent = parent
+    return s
+end
+
+local function padding(parent, left, right, top, bottom)
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft = UDim.new(0, left or 0)
+    p.PaddingRight = UDim.new(0, right or 0)
+    p.PaddingTop = UDim.new(0, top or 0)
+    p.PaddingBottom = UDim.new(0, bottom or 0)
+    p.Parent = parent
+    return p
+end
+
+local function makeText(parent, text, size, color, font)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Text = text or ""
+    label.TextColor3 = color or Theme.Text
+    label.TextSize = size or 14
+    label.Font = font or Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = parent
+    return label
+end
+
+local function makeDraggable(handle, target)
+    local dragging, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = target.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            target.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+function ZUI:Notify(options)
+    options = options or {}
+    local gui = self.ScreenGui
+    if not gui then return end
+
+    local holder = gui:FindFirstChild("Notifications")
+    if not holder then
+        holder = Instance.new("Frame")
+        holder.Name = "Notifications"
+        holder.BackgroundTransparency = 1
+        holder.Size = UDim2.new(0, 320, 1, -20)
+        holder.Position = UDim2.new(1, -335, 0, 10)
+        holder.Parent = gui
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 8)
+        layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+        layout.Parent = holder
+    end
+
+    local note = Instance.new("Frame")
+    note.Size = UDim2.new(1, 0, 0, 72)
+    note.BackgroundColor3 = Theme.Panel
+    note.BackgroundTransparency = 0.04
+    note.Parent = holder
+    corner(note, 10)
+    stroke(note, Theme.Border)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 3, 1, -18)
+    bar.Position = UDim2.new(0, 8, 0, 9)
+    bar.BackgroundColor3 = Theme.Blue
+    bar.BorderSizePixel = 0
+    bar.Parent = note
+    corner(bar, 2)
+
+    makeText(note, options.Title or "Z UI", 14, Theme.Text, Enum.Font.GothamBold).Position = UDim2.new(0, 22, 0, 10)
+    makeText(note, options.Content or options.Message or "", 12, Theme.SubText).Position = UDim2.new(0, 22, 0, 32)
+
+    note.Position = UDim2.new(1, 30, 0, 0)
+    tween(note, 0.35, {Position = UDim2.new(0, 0, 0, 0)})
+
+    task.delay(options.Duration or 3, function()
+        if note and note.Parent then
+            tween(note, 0.3, {Position = UDim2.new(1, 30, 0, 0), BackgroundTransparency = 1})
+            task.wait(0.32)
+            note:Destroy()
+        end
+    end)
+end
+
+function ZUI:CreateWindow(options)
+    options = options or {}
+    local config = mergeConfig(options)
+
+    local winInstance = setmetatable({}, ZUI)
+    winInstance.Config = config
+
+    local old = CoreGui:FindFirstChild("ZUI")
+    if old then old:Destroy() end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ZUI"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function() gui.Parent = CoreGui end)
+    if not gui.Parent then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    winInstance.ScreenGui = gui
+    winInstance.Services = {}
+    winInstance.ActiveService = nil
+    winInstance.Minimized = false
+
+    local width, height = clampMobileSize(config)
+    local finalSize = UDim2.fromOffset(width, height)
+
+    local main = Instance.new("Frame")
+    main.Name = "Window"
+    main.Size = finalSize
+    main.Position = config.Position
+    main.AnchorPoint = Vector2.new(0.5, 0.5)
+    main.BackgroundColor3 = config.BackgroundColor
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.Parent = gui
+    corner(main, 12)
+    stroke(main, Theme.Border)
+    winInstance.Main = main
+
+    applyBackground(main, config)
+
+    local topbar = Instance.new("Frame")
+    topbar.Name = "Topbar"
+    topbar.Size = UDim2.new(1, 0, 0, 48)
+    topbar.BackgroundColor3 = Theme.Panel
+    topbar.BackgroundTransparency = 0.08
+    topbar.BorderSizePixel = 0
+    topbar.ZIndex = 5
+    topbar.Parent = main
+
+    local dragHandle = Instance.new("TextButton")
+    dragHandle.Name = "DragHandle"
+    dragHandle.Text = ""
+    dragHandle.BackgroundTransparency = 1
+    dragHandle.Size = UDim2.new(1, -88, 1, 0)
+    dragHandle.ZIndex = 6
+    dragHandle.Parent = topbar
+
+    makeText(topbar, options.Title or "Z UI", 15, Theme.Text, Enum.Font.GothamBold).Position = UDim2.new(0, 14, 0, 6)
+    makeText(topbar, options.Subtitle or "Mobile", 9, Theme.SubText).Position = UDim2.new(0, 15, 0, 27)
+
+    local minimize = Instance.new("TextButton")
+    minimize.Name = "Minimize"
+    minimize.Text = "−"
+    minimize.TextColor3 = Theme.SubText
+    minimize.TextSize = 22
+    minimize.BackgroundTransparency = 1
+    minimize.Size = UDim2.fromOffset(36, 36)
+    minimize.Position = UDim2.new(1, -76, 0, 6)
+    minimize.ZIndex = 8
+    minimize.Parent = topbar
+
+    local close = Instance.new("TextButton")
+    close.Name = "Close"
+    close.Text = "×"
+    close.TextColor3 = Theme.SubText
+    close.TextSize = 22
+    close.BackgroundTransparency = 1
+    close.Size = UDim2.fromOffset(36, 36)
+    close.Position = UDim2.new(1, -40, 0, 6)
+    close.ZIndex = 8
+    close.Parent = topbar
+
+    minimize.MouseButton1Click:Connect(function()
+        winInstance.Minimized = not winInstance.Minimized
+        if winInstance.Minimized then
+            minimize.Text = "+"
+            winInstance._SavedWidth = main.Size.X.Offset
+            winInstance._SavedHeight = main.Size.Y.Offset
+            main.Visible = false
+        else
+            minimize.Text = "−"
+            main.Visible = true
+            main.Size = UDim2.fromOffset(winInstance._SavedWidth, winInstance._SavedHeight)
+        end
+    end)
+
+    close.MouseButton1Click:Connect(function() gui:Destroy() end)
+    makeDraggable(dragHandle, main)
+
+    local sidebarWidth = math.clamp(math.floor(width * 0.27), 88, 110)
+    local sidebar = Instance.new("Frame")
+    sidebar.Name = "Sidebar"
+    sidebar.Size = UDim2.new(0, sidebarWidth, 1, -48)
+    sidebar.Position = UDim2.new(0, 0, 0, 48)
+    sidebar.BackgroundColor3 = Theme.Sidebar
+    sidebar.BackgroundTransparency = 0.05
+    sidebar.BorderSizePixel = 0
+    sidebar.Parent = main
+
+    local serviceList = Instance.new("ScrollingFrame")
+    serviceList.Name = "ServiceList"
+    serviceList.BackgroundTransparency = 1
+    serviceList.BorderSizePixel = 0
+    serviceList.Position = UDim2.new(0, 5, 0, 32)
+    serviceList.Size = UDim2.new(1, -10, 1, -38)
+    serviceList.ScrollBarThickness = 1
+    serviceList.CanvasSize = UDim2.new()
+    serviceList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    serviceList.Parent = sidebar
+
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 3)
+    listLayout.Parent = serviceList
+
+    local selector = Instance.new("Frame")
+    selector.Name = "Selector"
+    selector.Size = UDim2.fromOffset(3, 34)
+    selector.BackgroundColor3 = config.SelectorColor
+    selector.BorderSizePixel = 0
+    selector.Visible = false
+    selector.Parent = sidebar
+    corner(selector, 2)
+
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -sidebarWidth, 1, -48)
+    content.Position = UDim2.new(0, sidebarWidth, 0, 48)
+    content.BackgroundColor3 = Theme.Background
+    content.BackgroundTransparency = 0.04
+    content.BorderSizePixel = 0
+    content.Parent = main
+
+    winInstance.Sidebar = sidebar
+    winInstance.ServiceList = serviceList
+    winInstance.Selector = selector
+    winInstance.Content = content
+
+    main.Size = UDim2.fromOffset(math.min(80, width), 48)
+    tween(main, 0.35, {Size = finalSize})
+
+    return winInstance
+end
+
+function ZUI:CreateService(name, icon)
+    assert(self.Main, "CreateWindow must be called first.")
+    local service = { Name = name, Window = self, Elements = {} }
+
+    local button = Instance.new("TextButton")
+    button.Name = name
+    button.Size = UDim2.new(1, 0, 0, 34)
+    button.BackgroundTransparency = 1
+    button.Text = ""
+    button.Parent = self.ServiceList
+
+    local iconLabel = makeText(button, icon or "•", 15, Theme.SubText, Enum.Font.GothamBold)
+    iconLabel.Name = "Icon"
+    iconLabel.Size = UDim2.fromOffset(24, 34)
+
+    local label = makeText(button, name, 10, Theme.SubText, Enum.Font.GothamMedium)
+    label.Name = "Label"
+    label.Size = UDim2.new(1, -28, 1, 0)
+    label.Position = UDim2.new(0, 27, 0, 0)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Name = name .. "_Page"
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.CanvasSize = UDim2.new()
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.ScrollBarThickness = 3
+    page.Visible = false
+    page.Parent = self.Content
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 10)
+    layout.Parent = page
+    padding(page, 10, 10, 10, 10)
+
+    service.Button = button
+    service.Page = page
+
+    button.MouseButton1Click:Connect(function()
+        self:SelectService(service)
+    end)
+
+    table.insert(self.Services, service)
+    if not self.ActiveService then
+        task.defer(function() self:SelectService(service, true) end)
+    end
+
+    return service
+end
+
+function ZUI:SelectService(service, instant)
+    if not service then return end
+    self.ActiveService = service
+
+    for _, s in ipairs(self.Services) do
+        local active = s == service
+        s.Page.Visible = active
+        local lbl = s.Button:FindFirstChild("Label")
+        local icon = s.Button:FindFirstChild("Icon")
+        if lbl then tween(lbl, 0.16, {TextColor3 = active and Theme.Text or Theme.SubText}) end
+        if icon then tween(icon, 0.16, {TextColor3 = active and Theme.BlueLight or Theme.SubText}) end
+    end
+
+    task.defer(function()
+        if not service.Button.Parent or not self.Selector.Parent then return end
+        local targetY = service.Button.AbsolutePosition.Y - self.Sidebar.AbsolutePosition.Y
+        local target = { Position = UDim2.fromOffset(1, targetY), Size = UDim2.fromOffset(3, service.Button.AbsoluteSize.Y) }
+        if instant then
+            self.Selector.Position = target.Position
+            self.Selector.Size = target.Size
+        else
+            tween(self.Selector, 0.25, target)
+        end
+        self.Selector.Visible = true
+    end)
+end
+
+function ZUI:Destroy()
+    if self.ScreenGui then self.ScreenGui:Destroy() end
+end
+
+return ZUI
