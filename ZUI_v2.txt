@@ -1,0 +1,1419 @@
+-- Z UI - Complete Roblox UI Library
+-- Version 1.1
+-- Clean library file: no loader/example block.
+-- Features: mobile-first window, draggable controls, services sidebar, moving "|" selector,
+-- buttons, toggles, sliders, inputs, dropdowns, labels and notifications.
+
+local ZUI = {}
+ZUI.__index = ZUI
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Theme = {
+    Background = Color3.fromRGB(13, 15, 20),
+    Sidebar = Color3.fromRGB(17, 19, 25),
+    Panel = Color3.fromRGB(20, 23, 30),
+    Element = Color3.fromRGB(25, 28, 36),
+    ElementHover = Color3.fromRGB(31, 35, 45),
+    Border = Color3.fromRGB(42, 46, 58),
+    Text = Color3.fromRGB(240, 242, 247),
+    SubText = Color3.fromRGB(145, 151, 164),
+    Blue = Color3.fromRGB(55, 145, 255),
+    BlueLight = Color3.fromRGB(100, 180, 255),
+    Red = Color3.fromRGB(240, 75, 85),
+    White = Color3.fromRGB(255, 255, 255)
+}
+
+local DefaultConfig = {
+    -- Mobile-first defaults. Override these in CreateWindow({...}).
+    Mobile = true,
+    Width = 360,
+    Height = 430,
+    MinWidth = 300,
+    MinHeight = 260,
+    Margin = 12,
+
+    -- Appearance configured from the script (no settings UI required).
+    BackgroundColor = Color3.fromRGB(13, 15, 20),
+    BackgroundImage = "", -- Example: "rbxassetid://123456789"
+    BackgroundImageTransparency = 0.28,
+
+    -- Animated background: provide a list of uploaded image asset IDs.
+    -- Example: {"rbxassetid://111", "rbxassetid://222"}
+    BackgroundGIF = nil,
+    GIFInterval = 0.10,
+
+    -- The moving "|" uses this color.
+    SelectorColor = Color3.fromRGB(55, 145, 255),
+
+    -- Position can be overridden with UDim2.
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+
+    -- Mobile minimized bar. Configure it directly from the script.
+    MinimizedBar = true,
+    MinimizedWidth = 300,
+    MinimizedHeight = 52,
+    MinimizedTransparency = 0.80,
+    MinimizedTitle = "Z UI",
+    MinimizedIcon = "Skull", -- Skull, Fire, Lightning, Crown, Ghost, Star, Eye, Wolf, Dragon, Moon, Atom, Flame
+    MinimizedIconSize = 28,
+    MinimizedIconImage = "", -- Optional: rbxassetid://... overrides the preset emoji/icon.
+    MinimizedIconAnimation = "PulseRotate", -- PulseRotate, Float, Spin, None
+    MinimizedBarColor = Color3.fromRGB(13, 15, 20),
+    MinimizedAccentColor = Color3.fromRGB(55, 145, 255)
+}
+
+local function mergeConfig(options)
+    local config = {}
+    for k, v in pairs(DefaultConfig) do
+        config[k] = v
+    end
+    for k, v in pairs(options or {}) do
+        config[k] = v
+    end
+    return config
+end
+
+local function clampMobileSize(config)
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+
+    local width = math.min(config.Width, math.max(config.MinWidth, viewport.X - config.Margin * 2))
+    local height = math.min(config.Height, math.max(config.MinHeight, viewport.Y - config.Margin * 2))
+
+    return width, height
+end
+
+local function applyBackground(main, config)
+    main.BackgroundColor3 = config.BackgroundColor
+
+    local old = main:FindFirstChild("ZUI_Background")
+    if old then old:Destroy() end
+
+    local bg = Instance.new("ImageLabel")
+    bg.Name = "ZUI_Background"
+    bg.Size = UDim2.fromScale(1, 1)
+    bg.Position = UDim2.fromScale(0, 0)
+    bg.BackgroundTransparency = 1
+    bg.BorderSizePixel = 0
+    bg.ScaleType = Enum.ScaleType.Crop
+    bg.ImageTransparency = config.BackgroundImageTransparency or 0.28
+    bg.ZIndex = 0
+    bg.Parent = main
+
+    local bgCorner = Instance.new("UICorner")
+    bgCorner.CornerRadius = UDim.new(0, 12)
+    bgCorner.Parent = bg
+
+    if type(config.BackgroundGIF) == "table" and #config.BackgroundGIF > 0 then
+        task.spawn(function()
+            local index = 1
+            while bg.Parent do
+                bg.Image = tostring(config.BackgroundGIF[index])
+                index = index + 1
+                if index > #config.BackgroundGIF then
+                    index = 1
+                end
+                task.wait(config.GIFInterval or 0.10)
+            end
+        end)
+    elseif config.BackgroundImage and config.BackgroundImage ~= "" then
+        bg.Image = tostring(config.BackgroundImage)
+    else
+        bg.Image = ""
+    end
+
+    return bg
+end
+
+local function setZIndexRecursive(root, z)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("GuiObject") and obj.Name ~= "ZUI_Background" then
+            obj.ZIndex = math.max(obj.ZIndex, z)
+        end
+    end
+end
+
+local function tweenZIndexRecursive(root, z)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("GuiObject") and obj.Name ~= "ZUI_Background" then
+            obj.ZIndex = math.max(obj.ZIndex, z)
+        end
+    end
+end
+
+local function tween(obj, time, props, style, direction)
+    local info = TweenInfo.new(
+        time or 0.2,
+        style or Enum.EasingStyle.Quint,
+        direction or Enum.EasingDirection.Out
+    )
+    local t = TweenService:Create(obj, info, props)
+    t:Play()
+    return t
+end
+
+local function corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = parent
+    return c
+end
+
+local function stroke(parent, color, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Theme.Border
+    s.Transparency = transparency or 0
+    s.Thickness = 1
+    s.Parent = parent
+    return s
+end
+
+local function padding(parent, left, right, top, bottom)
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft = UDim.new(0, left or 0)
+    p.PaddingRight = UDim.new(0, right or 0)
+    p.PaddingTop = UDim.new(0, top or 0)
+    p.PaddingBottom = UDim.new(0, bottom or 0)
+    p.Parent = parent
+    return p
+end
+
+local function makeText(parent, text, size, color, font)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Text = text or ""
+    label.TextColor3 = color or Theme.Text
+    label.TextSize = size or 14
+    label.Font = font or Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = parent
+    return label
+end
+
+local function iconText(parent, text)
+    local label = makeText(parent, text, 15, Theme.SubText, Enum.Font.GothamBold)
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    return label
+end
+
+local function makeDraggable(handle, target)
+    local dragging = false
+    local dragStart
+    local startPos
+
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = target.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            local delta = input.Position - dragStart
+            target.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+function ZUI:Notify(options)
+    options = options or {}
+
+    local gui = self.ScreenGui
+    if not gui then return end
+
+    local holder = gui:FindFirstChild("Notifications")
+    if not holder then
+        holder = Instance.new("Frame")
+        holder.Name = "Notifications"
+        holder.BackgroundTransparency = 1
+        holder.Size = UDim2.new(0, 320, 1, -20)
+        holder.Position = UDim2.new(1, -335, 0, 10)
+        holder.Parent = gui
+
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 8)
+        layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+        layout.Parent = holder
+    end
+
+    local note = Instance.new("Frame")
+    note.Size = UDim2.new(1, 0, 0, 72)
+    note.BackgroundColor3 = Theme.Panel
+    note.BackgroundTransparency = 0.04
+    note.Parent = holder
+    corner(note, 10)
+    stroke(note, Theme.Border)
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(0, 3, 1, -18)
+    bar.Position = UDim2.new(0, 8, 0, 9)
+    bar.BackgroundColor3 = Theme.Blue
+    bar.BorderSizePixel = 0
+    bar.Parent = note
+    corner(bar, 2)
+
+    local titleLabel = makeText(note, options.Title or "Z UI", 14, Theme.Text, Enum.Font.GothamBold)
+    titleLabel.Position = UDim2.new(0, 22, 0, 10)
+    titleLabel.Size = UDim2.new(1, -32, 0, 20)
+
+    local msgLabel = makeText(note, options.Content or options.Message or "", 12, Theme.SubText)
+    msgLabel.Position = UDim2.new(0, 22, 0, 32)
+    msgLabel.Size = UDim2.new(1, -32, 0, 30)
+    msgLabel.TextWrapped = true
+
+    note.Position = UDim2.new(1, 30, 0, 0)
+    tween(note, 0.35, {Position = UDim2.new(0, 0, 0, 0)})
+
+    task.delay(options.Duration or 3, function()
+        if note.Parent then
+            tween(note, 0.3, {
+                Position = UDim2.new(1, 30, 0, 0),
+                BackgroundTransparency = 1
+            })
+            task.wait(0.32)
+            note:Destroy()
+        end
+    end)
+end
+
+local MinimizedIconPresets = {
+    Skull = {Text = "☠", Name = "Calaverita"},
+    Fire = {Text = "🔥", Name = "Fueguito"},
+    Lightning = {Text = "⚡", Name = "Rayo"},
+    Crown = {Text = "♛", Name = "Corona"},
+    Ghost = {Text = "👻", Name = "Fantasma"},
+    Star = {Text = "★", Name = "Estrella"},
+    Eye = {Text = "◉", Name = "Ojo"},
+    Wolf = {Text = "🐺", Name = "Lobo"},
+    Dragon = {Text = "🐉", Name = "Dragón"},
+    Moon = {Text = "☾", Name = "Luna"},
+    Atom = {Text = "⚛", Name = "Átomo"},
+    Flame = {Text = "♨", Name = "Llama"}
+}
+
+local function getMinimizedIcon(config)
+    if config.MinimizedIconImage and config.MinimizedIconImage ~= "" then
+        return nil, tostring(config.MinimizedIconImage)
+    end
+    local preset = MinimizedIconPresets[tostring(config.MinimizedIcon or "Skull")] or MinimizedIconPresets.Skull
+    return preset.Text, nil
+end
+
+function ZUI:_CreateMinimizedBar(width, height)
+    local config = self.Config
+    local bar = Instance.new("Frame")
+    bar.Name = "MinimizedBar"
+    bar.Size = UDim2.fromOffset(math.min(config.MinimizedWidth or 300, width), config.MinimizedHeight or 52)
+    bar.Position = config.Position
+    bar.AnchorPoint = Vector2.new(0.5, 0.5)
+    bar.BackgroundColor3 = config.MinimizedBarColor or Theme.Background
+    bar.BackgroundTransparency = config.MinimizedTransparency == nil and 0.80 or config.MinimizedTransparency
+    bar.BorderSizePixel = 0
+    bar.Visible = false
+    bar.ZIndex = 100
+    bar.Parent = self.ScreenGui
+    corner(bar, 15)
+    stroke(bar, config.MinimizedAccentColor or Theme.Blue, 0.15)
+
+    local hit = Instance.new("TextButton")
+    hit.Name = "DragAndRestore"
+    hit.Size = UDim2.new(1, -92, 1, 0)
+    hit.Position = UDim2.fromOffset(48, 0)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.AutoButtonColor = false
+    hit.ZIndex = 101
+    hit.Parent = bar
+
+    local menu = Instance.new("TextButton")
+    menu.Name = "Menu"
+    menu.Size = UDim2.fromOffset(42, 42)
+    menu.Position = UDim2.fromOffset(5, 5)
+    menu.BackgroundTransparency = 1
+    menu.Text = "☰"
+    menu.TextColor3 = Theme.Text
+    menu.TextSize = 25
+    menu.Font = Enum.Font.GothamBold
+    menu.AutoButtonColor = false
+    menu.ZIndex = 103
+    menu.Parent = bar
+
+    local iconFrame = Instance.new("Frame")
+    iconFrame.Name = "AnimatedIcon"
+    iconFrame.Size = UDim2.fromOffset(36, 36)
+    iconFrame.Position = UDim2.new(0, 52, 0.5, -18)
+    iconFrame.BackgroundTransparency = 1
+    iconFrame.ZIndex = 103
+    iconFrame.Parent = bar
+
+    local iconTextValue, iconImageValue = getMinimizedIcon(config)
+    local icon
+    if iconImageValue then
+        icon = Instance.new("ImageLabel")
+        icon.Image = iconImageValue
+        icon.ScaleType = Enum.ScaleType.Fit
+    else
+        icon = Instance.new("TextLabel")
+        icon.Text = iconTextValue or "☠"
+        icon.TextSize = config.MinimizedIconSize or 28
+        icon.Font = Enum.Font.GothamBlack
+        icon.TextColor3 = Theme.Text
+    end
+    icon.Name = "Icon"
+    icon.Size = UDim2.fromScale(1, 1)
+    icon.BackgroundTransparency = 1
+    icon.ZIndex = 104
+    icon.Parent = iconFrame
+
+    local title = makeText(bar, config.MinimizedTitle or "Z UI", 15, Theme.Text, Enum.Font.GothamBold)
+    title.Position = UDim2.new(0, 96, 0, 9)
+    title.Size = UDim2.new(1, -145, 0, 20)
+    title.ZIndex = 103
+
+    local sub = makeText(bar, "Toca para abrir", 9, Theme.SubText)
+    sub.Position = UDim2.new(0, 97, 0, 28)
+    sub.Size = UDim2.new(1, -145, 0, 14)
+    sub.ZIndex = 103
+
+    local restore = Instance.new("TextLabel")
+    restore.Name = "RestoreHint"
+    restore.Size = UDim2.fromOffset(35, 35)
+    restore.Position = UDim2.new(1, -43, 0.5, -17)
+    restore.BackgroundTransparency = 1
+    restore.Text = "⌃"
+    restore.TextColor3 = Theme.SubText
+    restore.TextSize = 20
+    restore.Font = Enum.Font.GothamBold
+    restore.ZIndex = 103
+    restore.Parent = bar
+
+    local anim = config.MinimizedIconAnimation or "PulseRotate"
+    if anim ~= "None" then
+        task.spawn(function()
+            local direction = 1
+            while icon.Parent and bar.Parent do
+                if anim == "Spin" then
+                    tween(icon, 0.8, {Rotation = 360 * direction}, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut):Completed:Wait()
+                    icon.Rotation = 0
+                    direction = -direction
+                elseif anim == "Float" then
+                    tween(icon, 0.45, {Position = UDim2.new(0, 0, 0, -3)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Completed:Wait()
+                    tween(icon, 0.45, {Position = UDim2.new(0, 0, 0, 3)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Completed:Wait()
+                else
+                    tween(icon, 0.45, {Rotation = 7, Size = UDim2.fromScale(1.08, 1.08)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Completed:Wait()
+                    tween(icon, 0.45, {Rotation = -7, Size = UDim2.fromScale(0.94, 0.94)}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Completed:Wait()
+                end
+            end
+        end)
+    end
+
+    makeDraggable(hit, bar)
+    hit.MouseButton1Click:Connect(function()
+        if self.Minimized then
+            self.Minimized = false
+            bar.Visible = false
+            mainRestore(self)
+        end
+    end)
+
+    menu.MouseButton1Click:Connect(function()
+        if self.Minimized then
+            self.Minimized = false
+            bar.Visible = false
+            mainRestore(self)
+        end
+    end)
+
+    self.MinimizedBar = bar
+    self.MinimizedIcon = icon
+    return bar
+end
+
+local function mainRestore(self)
+    local main = self.Main
+    if not main or not main.Parent then return end
+    main.Visible = true
+    main.Size = UDim2.fromOffset(self._SavedWidth or main.Size.X.Offset, 48)
+    tween(main, 0.25, {Size = UDim2.fromOffset(self._SavedWidth or main.Size.X.Offset, self._SavedHeight or 430)}, Enum.EasingStyle.Quint)
+end
+
+function ZUI:CreateWindow(options)
+    options = options or {}
+    local config = mergeConfig(options)
+
+    -- Allow theme colors to be configured from the script.
+    if type(options.Theme) == "table" then
+        for key, value in pairs(options.Theme) do
+            if Theme[key] ~= nil then
+                Theme[key] = value
+            end
+        end
+    end
+
+    if options.AccentColor then
+        Theme.Blue = options.AccentColor
+        Theme.BlueLight = options.AccentLightColor or options.AccentColor
+    end
+
+    local self = setmetatable({}, ZUI)
+    self.Config = config
+
+    local old = CoreGui:FindFirstChild("ZUI")
+    if old then old:Destroy() end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ZUI"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    local ok = pcall(function()
+        gui.Parent = CoreGui
+    end)
+    if not ok or not gui.Parent then
+        gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    self.ScreenGui = gui
+    self.Services = {}
+    self.ActiveService = nil
+    self.Minimized = false
+
+    local width, height
+    if config.Mobile ~= false then
+        width, height = clampMobileSize(config)
+    else
+        local size = options.Size or UDim2.fromOffset(config.Width, config.Height)
+        width = size.X.Offset
+        height = size.Y.Offset
+    end
+
+    local finalSize = UDim2.fromOffset(width, height)
+
+    local main = Instance.new("Frame")
+    main.Name = "Window"
+    main.Size = finalSize
+    main.Position = config.Position
+    main.AnchorPoint = Vector2.new(0.5, 0.5)
+    main.BackgroundColor3 = config.BackgroundColor
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.Parent = gui
+    corner(main, 12)
+    stroke(main, Theme.Border)
+    self.Main = main
+
+    local bg = applyBackground(main, config)
+    bg.ZIndex = 0
+
+    local topbar = Instance.new("Frame")
+    topbar.Name = "Topbar"
+    topbar.Size = UDim2.new(1, 0, 0, 48)
+    topbar.BackgroundColor3 = Theme.Panel
+    topbar.BackgroundTransparency = 0.08
+    topbar.BorderSizePixel = 0
+    topbar.ZIndex = 5
+    topbar.Parent = main
+
+    local dragHandle = Instance.new("TextButton")
+    dragHandle.Name = "DragHandle"
+    dragHandle.Text = ""
+    dragHandle.BackgroundTransparency = 1
+    dragHandle.AutoButtonColor = false
+    dragHandle.Size = UDim2.new(1, -88, 1, 0)
+    dragHandle.Position = UDim2.fromOffset(0, 0)
+    dragHandle.ZIndex = 6
+    dragHandle.Parent = topbar
+
+    local title = makeText(topbar, options.Title or "Z UI", 15, Theme.Text, Enum.Font.GothamBold)
+    title.Position = UDim2.new(0, 14, 0, 6)
+    title.Size = UDim2.new(1, -20, 0, 20)
+    title.ZIndex = 7
+
+    local subtitle = makeText(topbar, options.Subtitle or "Mobile", 9, Theme.SubText)
+    subtitle.Position = UDim2.new(0, 15, 0, 27)
+    subtitle.Size = UDim2.new(1, -20, 0, 15)
+    subtitle.ZIndex = 7
+
+    local minimize = Instance.new("TextButton")
+    minimize.Name = "Minimize"
+    minimize.Text = "−"
+    minimize.TextColor3 = Theme.SubText
+    minimize.TextSize = 22
+    minimize.Font = Enum.Font.Gotham
+    minimize.BackgroundTransparency = 1
+    minimize.AutoButtonColor = false
+    minimize.Size = UDim2.fromOffset(36, 36)
+    minimize.Position = UDim2.new(1, -76, 0, 6)
+    minimize.ZIndex = 8
+    minimize.Parent = topbar
+
+    local close = Instance.new("TextButton")
+    close.Name = "Close"
+    close.Text = "×"
+    close.TextColor3 = Theme.SubText
+    close.TextSize = 22
+    close.Font = Enum.Font.Gotham
+    close.BackgroundTransparency = 1
+    close.AutoButtonColor = false
+    close.Size = UDim2.fromOffset(36, 36)
+    close.Position = UDim2.new(1, -40, 0, 6)
+    close.ZIndex = 8
+    close.Parent = topbar
+
+    minimize.MouseButton1Click:Connect(function()
+        self.Minimized = not self.Minimized
+
+        if self.Minimized then
+            minimize.Text = "+"
+            self._SavedWidth = main.Size.X.Offset
+            self._SavedHeight = main.Size.Y.Offset
+            main.Visible = false
+            if self.MinimizedBar then
+                self.MinimizedBar.Position = main.Position
+                self.MinimizedBar.Visible = true
+                self.MinimizedBar.Size = UDim2.fromOffset(70, self.Config.MinimizedHeight or 52)
+                tween(self.MinimizedBar, 0.25, {
+                    Size = UDim2.fromOffset(math.min(self.Config.MinimizedWidth or 300, self._SavedWidth), self.Config.MinimizedHeight or 52)
+                }, Enum.EasingStyle.Quint)
+            end
+        else
+            minimize.Text = "−"
+            if self.MinimizedBar then self.MinimizedBar.Visible = false end
+            mainRestore(self)
+        end
+    end)
+
+    close.MouseButton1Click:Connect(function()
+        gui:Destroy()
+    end)
+
+    makeDraggable(dragHandle, main)
+
+    -- Compact mobile bar shown when the window is minimized.
+    self._SavedWidth = width
+    self._SavedHeight = height
+    if config.MinimizedBar ~= false then
+        self:_CreateMinimizedBar(width, height)
+    end
+
+    local sidebarWidth = math.clamp(math.floor(width * 0.27), 88, 110)
+
+    local sidebar = Instance.new("Frame")
+    sidebar.Name = "Sidebar"
+    sidebar.Size = UDim2.new(0, sidebarWidth, 1, -48)
+    sidebar.Position = UDim2.new(0, 0, 0, 48)
+    sidebar.BackgroundColor3 = Theme.Sidebar
+    sidebar.BackgroundTransparency = 0.05
+    sidebar.BorderSizePixel = 0
+    sidebar.ZIndex = 5
+    sidebar.Parent = main
+
+    local sidebarTitle = makeText(sidebar, "SERVICES", 8, Theme.SubText, Enum.Font.GothamBold)
+    sidebarTitle.Position = UDim2.new(0, 10, 0, 10)
+    sidebarTitle.Size = UDim2.new(1, -16, 0, 16)
+    sidebarTitle.ZIndex = 7
+
+    local serviceList = Instance.new("ScrollingFrame")
+    serviceList.Name = "ServiceList"
+    serviceList.BackgroundTransparency = 1
+    serviceList.BorderSizePixel = 0
+    serviceList.Position = UDim2.new(0, 5, 0, 32)
+    serviceList.Size = UDim2.new(1, -10, 1, -38)
+    serviceList.ScrollBarThickness = 1
+    serviceList.ScrollBarImageColor3 = Theme.Blue
+    serviceList.CanvasSize = UDim2.new()
+    serviceList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    serviceList.ZIndex = 6
+    serviceList.Parent = sidebar
+
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 3)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = serviceList
+    padding(serviceList, 0, 0, 2, 2)
+
+    -- The selector is OUTSIDE the scrolling list, so UIListLayout cannot move it.
+    local selector = Instance.new("Frame")
+    selector.Name = "Selector"
+    selector.Size = UDim2.fromOffset(3, 34)
+    selector.Position = UDim2.fromOffset(1, 34)
+    selector.BackgroundColor3 = config.SelectorColor
+    selector.BorderSizePixel = 0
+    selector.Visible = false
+    selector.ZIndex = 20
+    selector.Parent = sidebar
+    corner(selector, 2)
+
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -sidebarWidth, 1, -48)
+    content.Position = UDim2.new(0, sidebarWidth, 0, 48)
+    content.BackgroundColor3 = Theme.Background
+    content.BackgroundTransparency = 0.04
+    content.BorderSizePixel = 0
+    content.ZIndex = 5
+    content.Parent = main
+
+    self.Sidebar = sidebar
+    self.ServiceList = serviceList
+    self.Selector = selector
+    self.Content = content
+    self.Topbar = topbar
+    self.MinimizeButton = minimize
+    self.CloseButton = close
+    self.Background = bg
+
+    -- Start compact and animate to the mobile size.
+    main.Size = UDim2.fromOffset(math.min(80, width), 48)
+    tween(main, 0.35, {Size = finalSize}, Enum.EasingStyle.Quint)
+
+    return self
+end
+
+-- Service API wrappers
+-- Allows: Main:CreateButton(...), Main:CreateToggle(...), etc.
+local function attachServiceMethods(service, window)
+    function service:CreateSection(text)
+        return window:CreateSection(self, text)
+    end
+
+    function service:CreateLabel(options)
+        return window:CreateLabel(self, options)
+    end
+
+    function service:CreateButton(options)
+        return window:CreateButton(self, options)
+    end
+
+    function service:CreateToggle(options)
+        return window:CreateToggle(self, options)
+    end
+
+    function service:CreateSlider(options)
+        return window:CreateSlider(self, options)
+    end
+
+    function service:CreateInput(options)
+        return window:CreateInput(self, options)
+    end
+
+    function service:CreateDropdown(options)
+        return window:CreateDropdown(self, options)
+    end
+
+    return service
+end
+
+
+function ZUI:CreateService(name, icon)
+    assert(self.Main, "CreateWindow must be called first.")
+
+    local service = {
+        Name = name,
+        Window = self,
+        Elements = {}
+    }
+
+    local button = Instance.new("TextButton")
+    button.Name = name
+    button.Size = UDim2.new(1, 0, 0, 34)
+    button.BackgroundColor3 = Theme.Sidebar
+    button.BackgroundTransparency = 1
+    button.Text = ""
+    button.AutoButtonColor = false
+    button.Parent = self.ServiceList
+
+    local iconLabel = iconText(button, icon or "•")
+    iconLabel.Name = "Icon"
+    iconLabel.Size = UDim2.fromOffset(24, 34)
+    iconLabel.Position = UDim2.new(0, 2, 0, 0)
+
+    local label = makeText(button, name, 10, Theme.SubText, Enum.Font.GothamMedium)
+    label.Name = "Label"
+    label.Size = UDim2.new(1, -28, 1, 0)
+    label.Position = UDim2.new(0, 27, 0, 0)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Name = name .. "_Page"
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.CanvasSize = UDim2.new()
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.ScrollBarThickness = 3
+    page.ScrollBarImageColor3 = Theme.Blue
+    page.Visible = false
+    page.Parent = self.Content
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 10)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = page
+
+    padding(page, 10, 10, 10, 10)
+
+    service.Button = button
+    service.Page = page
+
+    button.MouseEnter:Connect(function()
+        if self.ActiveService ~= service then
+            tween(button, 0.15, {
+                BackgroundTransparency = 0.65,
+                BackgroundColor3 = Theme.ElementHover
+            })
+            tween(label, 0.15, {TextColor3 = Theme.Text})
+        end
+    end)
+
+    button.MouseLeave:Connect(function()
+        if self.ActiveService ~= service then
+            tween(button, 0.15, {
+                BackgroundTransparency = 1,
+                BackgroundColor3 = Theme.Sidebar
+            })
+            tween(label, 0.15, {TextColor3 = Theme.SubText})
+        end
+    end)
+
+    button.MouseButton1Click:Connect(function()
+        self:SelectService(service)
+    end)
+
+    table.insert(self.Services, service)
+
+    if not self.ActiveService then
+        task.defer(function()
+            self:SelectService(service, true)
+        end)
+    end
+
+    return attachServiceMethods(service, self)
+end
+
+function ZUI:SelectService(service, instant)
+    if not service then return end
+
+    self.ActiveService = service
+
+    for _, s in ipairs(self.Services) do
+        local active = s == service
+        s.Page.Visible = active
+
+        -- No blue selected rectangle/background. Only the text/icon changes.
+        tween(s.Button, instant and 0 or 0.16, {
+            BackgroundTransparency = 1
+        })
+
+        local lbl = s.Button:FindFirstChild("Label")
+        local icon = s.Button:FindFirstChild("Icon")
+
+        if lbl then
+            tween(lbl, instant and 0 or 0.16, {
+                TextColor3 = active and Theme.Text or Theme.SubText
+            })
+        end
+
+        if icon then
+            tween(icon, instant and 0 or 0.16, {
+                TextColor3 = active and Theme.BlueLight or Theme.SubText
+            })
+        end
+    end
+
+    task.defer(function()
+        if not service.Button.Parent or not self.Selector.Parent then return end
+
+        -- Calculate relative to the fixed sidebar, not the scrolling frame.
+        local targetY = service.Button.AbsolutePosition.Y
+            - self.Sidebar.AbsolutePosition.Y
+
+        local targetHeight = service.Button.AbsoluteSize.Y
+
+        self.Selector.Visible = true
+
+        local target = {
+            Position = UDim2.fromOffset(1, targetY),
+            Size = UDim2.fromOffset(3, targetHeight)
+        }
+
+        if instant then
+            self.Selector.Position = target.Position
+            self.Selector.Size = target.Size
+        else
+            tween(self.Selector, 0.25, target, Enum.EasingStyle.Quint)
+        end
+    end)
+end
+function ZUI:_CreateCard(service, height)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, height or 56)
+    card.BackgroundColor3 = Theme.Element
+    card.BorderSizePixel = 0
+    card.Parent = service.Page
+    corner(card, 9)
+    stroke(card, Theme.Border)
+
+    card.MouseEnter:Connect(function()
+        tween(card, 0.15, {BackgroundColor3 = Theme.ElementHover})
+    end)
+
+    card.MouseLeave:Connect(function()
+        tween(card, 0.15, {BackgroundColor3 = Theme.Element})
+    end)
+
+    return card
+end
+
+function ZUI:CreateSection(service, text)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(1, 0, 0, 28)
+    holder.BackgroundTransparency = 1
+    holder.Parent = service.Page
+
+    local label = makeText(holder, text or "Section", 11, Theme.BlueLight, Enum.Font.GothamBold)
+    label.Size = UDim2.new(1, 0, 1, 0)
+
+    return holder
+end
+
+function ZUI:CreateLabel(service, options)
+    options = type(options) == "string" and {Text = options} or options or {}
+
+    local card = self:_CreateCard(service, options.Height or 48)
+    local title = makeText(card, options.Text or options.Name or "Label", 13, Theme.Text)
+    title.Position = UDim2.new(0, 14, 0, 8)
+    title.Size = UDim2.new(1, -28, 1, -16)
+    title.TextWrapped = true
+
+    return card
+end
+
+function ZUI:CreateButton(service, options)
+    options = options or {}
+
+    local card = self:_CreateCard(service, 54)
+
+    local title = makeText(card, options.Name or "Button", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(1, -115, 0, 20)
+
+    local desc = makeText(card, options.Description or "", 10, Theme.SubText)
+    desc.Position = UDim2.new(0, 14, 0, 29)
+    desc.Size = UDim2.new(1, -115, 0, 18)
+
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.fromOffset(82, 32)
+    button.Position = UDim2.new(1, -94, 0.5, -16)
+    button.BackgroundColor3 = Theme.Blue
+    button.Text = options.Text or "Run"
+    button.TextColor3 = Theme.White
+    button.TextSize = 11
+    button.Font = Enum.Font.GothamBold
+    button.AutoButtonColor = false
+    button.Parent = card
+    corner(button, 7)
+
+    button.MouseEnter:Connect(function()
+        tween(button, 0.15, {BackgroundColor3 = Theme.BlueLight})
+    end)
+
+    button.MouseLeave:Connect(function()
+        tween(button, 0.15, {BackgroundColor3 = Theme.Blue})
+    end)
+
+    button.MouseButton1Click:Connect(function()
+        if options.Callback then
+            task.spawn(options.Callback)
+        end
+    end)
+
+    return card
+end
+
+function ZUI:CreateToggle(service, options)
+    options = options or {}
+
+    local state = options.Default == true
+    local card = self:_CreateCard(service, 54)
+
+    local title = makeText(card, options.Name or "Toggle", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(1, -85, 0, 20)
+
+    local desc = makeText(card, options.Description or "", 10, Theme.SubText)
+    desc.Position = UDim2.new(0, 14, 0, 29)
+    desc.Size = UDim2.new(1, -85, 0, 18)
+
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.fromOffset(44, 24)
+    toggle.Position = UDim2.new(1, -58, 0.5, -12)
+    toggle.BackgroundColor3 = Theme.Border
+    toggle.Text = ""
+    toggle.AutoButtonColor = false
+    toggle.Parent = card
+    corner(toggle, 12)
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(18, 18)
+    knob.Position = UDim2.new(0, 3, 0.5, -9)
+    knob.BackgroundColor3 = Theme.White
+    knob.Parent = toggle
+    corner(knob, 9)
+
+    local function update(fire)
+        tween(toggle, 0.2, {
+            BackgroundColor3 = state and Theme.Blue or Theme.Border
+        })
+
+        tween(knob, 0.2, {
+            Position = state
+                and UDim2.new(1, -21, 0.5, -9)
+                or UDim2.new(0, 3, 0.5, -9)
+        })
+
+        if fire and options.Callback then
+            task.spawn(options.Callback, state)
+        end
+    end
+
+    toggle.MouseButton1Click:Connect(function()
+        state = not state
+        update(true)
+    end)
+
+    update(false)
+
+    local object = {}
+
+    function object:Set(value)
+        state = value == true
+        update(true)
+    end
+
+    function object:Get()
+        return state
+    end
+
+    return object
+end
+
+function ZUI:CreateSlider(service, options)
+    options = options or {}
+
+    local min = options.Min or 0
+    local max = options.Max or 100
+    local value = math.clamp(options.Default or min, min, max)
+
+    local card = self:_CreateCard(service, 70)
+
+    local title = makeText(card, options.Name or "Slider", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(1, -80, 0, 20)
+
+    local valueLabel = makeText(card, tostring(value), 11, Theme.BlueLight, Enum.Font.GothamBold)
+    valueLabel.Position = UDim2.new(1, -65, 0, 8)
+    valueLabel.Size = UDim2.fromOffset(50, 20)
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, -28, 0, 6)
+    bar.Position = UDim2.new(0, 14, 0, 48)
+    bar.BackgroundColor3 = Theme.Border
+    bar.BorderSizePixel = 0
+    bar.Parent = card
+    corner(bar, 3)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((value - min) / math.max(1, max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Theme.Blue
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+    corner(fill, 3)
+
+    local dragging = false
+
+    local function setValue(newValue, fire)
+        value = math.clamp(newValue, min, max)
+
+        if options.Rounding then
+            value = math.floor(value / options.Rounding + 0.5) * options.Rounding
+            value = math.clamp(value, min, max)
+        end
+
+        local pct = (value - min) / math.max(1, max - min)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+
+        if fire and options.Callback then
+            task.spawn(options.Callback, value)
+        end
+    end
+
+    local function setFromX(x)
+        local pct = math.clamp(
+            (x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X),
+            0,
+            1
+        )
+        setValue(min + (max - min) * pct, true)
+    end
+
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local object = {}
+
+    function object:Set(newValue)
+        setValue(newValue, true)
+    end
+
+    function object:Get()
+        return value
+    end
+
+    return object
+end
+
+function ZUI:CreateInput(service, options)
+    options = options or {}
+
+    local card = self:_CreateCard(service, 70)
+
+    local title = makeText(card, options.Name or "Input", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(0, 160, 0, 20)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -190, 0, 34)
+    box.Position = UDim2.new(1, -176, 0.5, -17)
+    box.BackgroundColor3 = Theme.Background
+    box.BorderSizePixel = 0
+    box.PlaceholderText = options.Placeholder or "Enter text..."
+    box.PlaceholderColor3 = Theme.SubText
+    box.Text = options.Default or ""
+    box.TextColor3 = Theme.Text
+    box.TextSize = 11
+    box.Font = Enum.Font.Gotham
+    box.ClearTextOnFocus = false
+    box.Parent = card
+    corner(box, 7)
+    stroke(box, Theme.Border)
+    padding(box, 10, 10, 0, 0)
+
+    box.FocusLost:Connect(function(enter)
+        if options.Callback then
+            task.spawn(options.Callback, box.Text, enter)
+        end
+    end)
+
+    local object = {}
+
+    function object:Set(text)
+        box.Text = tostring(text)
+    end
+
+    function object:Get()
+        return box.Text
+    end
+
+    return object
+end
+
+function ZUI:CreateDropdown(service, options)
+    options = options or {}
+
+    local values = options.Values or options.Options or {}
+    local selected = options.Default or values[1]
+
+    local card = self:_CreateCard(service, 54)
+
+    local title = makeText(card, options.Name or "Dropdown", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(1, -220, 0, 20)
+
+    local selectedLabel = makeText(card, tostring(selected or "Select"), 11, Theme.BlueLight)
+    selectedLabel.Position = UDim2.new(1, -190, 0, 7)
+    selectedLabel.Size = UDim2.fromOffset(155, 20)
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+    local arrow = makeText(card, "▼", 10, Theme.SubText, Enum.Font.GothamBold)
+    arrow.Position = UDim2.new(1, -30, 0, 8)
+    arrow.Size = UDim2.fromOffset(16, 18)
+    arrow.TextXAlignment = Enum.TextXAlignment.Center
+
+    local click = Instance.new("TextButton")
+    click.BackgroundTransparency = 1
+    click.Text = ""
+    click.Size = UDim2.fromScale(1, 1)
+    click.Parent = card
+
+    local open = false
+    local popup
+
+    local function closePopup()
+        open = false
+        if popup then
+            popup:Destroy()
+            popup = nil
+        end
+        arrow.Text = "▼"
+    end
+
+    local function openPopup()
+        if open then
+            closePopup()
+            return
+        end
+
+        open = true
+        arrow.Text = "▲"
+
+        local popupHeight = math.min(180, math.max(42, #values * 34 + 8))
+
+        popup = Instance.new("Frame")
+        popup.BackgroundColor3 = Theme.Panel
+        popup.BorderSizePixel = 0
+        popup.Size = UDim2.new(0, 200, 0, popupHeight)
+        popup.Position = UDim2.new(
+            0,
+            card.AbsolutePosition.X - self.Main.AbsolutePosition.X
+                + card.AbsoluteSize.X - 200,
+            0,
+            card.AbsolutePosition.Y - self.Main.AbsolutePosition.Y
+                + card.AbsoluteSize.Y + 5
+        )
+        popup.ZIndex = 50
+        popup.Parent = self.Main
+        corner(popup, 8)
+        stroke(popup, Theme.Border)
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.Size = UDim2.fromScale(1, 1)
+        scroll.CanvasSize = UDim2.new(0, 0, 0, #values * 34 + 8)
+        scroll.ScrollBarThickness = 2
+        scroll.ZIndex = 50
+        scroll.Parent = popup
+        padding(scroll, 4, 4, 4, 4)
+
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 3)
+        layout.Parent = scroll
+
+        for _, item in ipairs(values) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 30)
+            b.BackgroundColor3 = Theme.Panel
+            b.BackgroundTransparency = 1
+            b.Text = tostring(item)
+            b.TextColor3 = Theme.SubText
+            b.TextSize = 11
+            b.Font = Enum.Font.Gotham
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.AutoButtonColor = false
+            b.ZIndex = 51
+            b.Parent = scroll
+            padding(b, 10, 5, 0, 0)
+            corner(b, 5)
+
+            b.MouseEnter:Connect(function()
+                tween(b, 0.1, {
+                    BackgroundTransparency = 0,
+                    BackgroundColor3 = Theme.ElementHover,
+                    TextColor3 = Theme.Text
+                })
+            end)
+
+            b.MouseLeave:Connect(function()
+                tween(b, 0.1, {
+                    BackgroundTransparency = 1,
+                    TextColor3 = Theme.SubText
+                })
+            end)
+
+            b.MouseButton1Click:Connect(function()
+                selected = item
+                selectedLabel.Text = tostring(item)
+                closePopup()
+
+                if options.Callback then
+                    task.spawn(options.Callback, item)
+                end
+            end)
+        end
+    end
+
+    click.MouseButton1Click:Connect(openPopup)
+
+    local object = {}
+
+    function object:Set(item)
+        selected = item
+        selectedLabel.Text = tostring(item)
+        if options.Callback then
+            task.spawn(options.Callback, item)
+        end
+    end
+
+    function object:Get()
+        return selected
+    end
+
+    return object
+end
+
+
+-- Script-only background customization.
+-- Examples:
+-- Window:SetBackgroundColor(Color3.fromRGB(20, 20, 30))
+-- Window:SetBackgroundImage("rbxassetid://123")
+-- Window:SetBackgroundGIF({"rbxassetid://1", "rbxassetid://2"}, 0.08)
+function ZUI:SetBackgroundColor(color)
+    if typeof(color) ~= "Color3" then return end
+    self.Config.BackgroundColor = color
+    self.Main.BackgroundColor3 = color
+end
+
+function ZUI:SetBackgroundImage(image, transparency)
+    if self.Background then
+        self.Config.BackgroundGIF = nil
+        self.Config.BackgroundImage = image or ""
+        if transparency ~= nil then
+            self.Config.BackgroundImageTransparency = transparency
+        end
+        self.Background.Image = image or ""
+        self.Background.ImageTransparency = self.Config.BackgroundImageTransparency or 0.28
+    end
+end
+
+function ZUI:SetBackgroundGIF(frames, interval, transparency)
+    if type(frames) ~= "table" or #frames == 0 or not self.Background then return end
+
+    self.Config.BackgroundImage = ""
+    self.Config.BackgroundGIF = frames
+    self.Config.GIFInterval = interval or self.Config.GIFInterval or 0.10
+
+    if transparency ~= nil then
+        self.Config.BackgroundImageTransparency = transparency
+    end
+
+    self.Background.ImageTransparency = self.Config.BackgroundImageTransparency or 0.28
+
+    task.spawn(function()
+        local index = 1
+        while self.Background and self.Background.Parent do
+            self.Background.Image = tostring(frames[index])
+            index = index + 1
+            if index > #frames then index = 1 end
+            task.wait(self.Config.GIFInterval)
+        end
+    end)
+end
+
+function ZUI:SetMinimizedIcon(name, image, animation)
+    if not self.MinimizedBar then return end
+    if image and image ~= "" then
+        self.Config.MinimizedIconImage = tostring(image)
+        if self.MinimizedIcon:IsA("ImageLabel") then
+            self.MinimizedIcon.Image = tostring(image)
+        else
+            local old = self.MinimizedIcon
+            local icon = Instance.new("ImageLabel")
+            icon.Name = old.Name
+            icon.Size = old.Size
+            icon.Position = old.Position
+            icon.BackgroundTransparency = 1
+            icon.Image = tostring(image)
+            icon.ScaleType = Enum.ScaleType.Fit
+            icon.ZIndex = old.ZIndex
+            icon.Parent = old.Parent
+            old:Destroy()
+            self.MinimizedIcon = icon
+        end
+    else
+        local preset = MinimizedIconPresets[tostring(name or "Skull")] or MinimizedIconPresets.Skull
+        self.Config.MinimizedIcon = tostring(name or "Skull")
+        self.Config.MinimizedIconImage = ""
+        if self.MinimizedIcon:IsA("TextLabel") then
+            self.MinimizedIcon.Text = preset.Text
+        else
+            local old = self.MinimizedIcon
+            local icon = Instance.new("TextLabel")
+            icon.Name = old.Name
+            icon.Size = old.Size
+            icon.Position = old.Position
+            icon.BackgroundTransparency = 1
+            icon.Text = preset.Text
+            icon.TextSize = self.Config.MinimizedIconSize or 28
+            icon.Font = Enum.Font.GothamBlack
+            icon.TextColor3 = Theme.Text
+            icon.ZIndex = old.ZIndex
+            icon.Parent = old.Parent
+            old:Destroy()
+            self.MinimizedIcon = icon
+        end
+    end
+    if animation then self.Config.MinimizedIconAnimation = animation end
+end
+
+function ZUI:SetSelectorColor(color)
+    if typeof(color) == "Color3" and self.Selector then
+        self.Config.SelectorColor = color
+        self.Selector.BackgroundColor3 = color
+    end
+end
+
+
+function ZUI:Destroy()
+    if self.ScreenGui then
+        self.ScreenGui:Destroy()
+    end
+end
+
+return ZUI
